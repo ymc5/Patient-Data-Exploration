@@ -1,0 +1,220 @@
+---
+title: "Class 10 Homework Framework_yc1222"
+format: 
+  html:
+    self-contained: true
+---
+
+```{r setup, include=FALSE}
+#| warning: false
+library(tidyverse)     # loads the tidyverse tools
+library(RPostgres)     # loads the database driver for PostgreSQL
+library(connections)   # helps RPostgres work with RStudio
+library(keyring)       # access to a local encrypted keychain for passwords
+
+
+con <- connection_open(RPostgres::Postgres(),
+          dbname = "syntheticMGUH",
+          host = "35.199.4.72",
+          user = "hids502_student",
+          password = key_get(service = "syntheticmguh", 
+                             username = "hids502_student"),
+          # Tell the driver to return very large integers as floating point (vs truncating them)
+          bigint = "numeric")
+```
+
+## I. Objective
+
+-   In this report, several analyses were conducted with different criteria for the purpose of understanding the given dataset.
+-   First of all, imaging_studies table was researched to study the types of imaging and to summarize the data.
+-   Next, asthma patient cohort was defined using the notes table, and then compared to the asthma condition using the conditions table.
+-   Additionally, patients with listed shellfish allergy who also received CT scans were filtered. 
+* Patients with the same first and last names were searched followed by filtering including additional criteria such as gender and zip code. 
+* Finally, patient database matching study was conducted to evaluate whether there are any duplicate data based on first name and middle name.
+
+## II. Dataset
+
+-   The dataset used for this analysis is the Synthea dataset, a synthetic electronic health records.
+
+## III. Results
+
+### 1) Imaging Table Analysis
+
+-   In this analysis, the type of imaging was evaluated. Digital radiography with the most operated type of imaging, followed by computed radiography, ultrasound, and computed tomography.
+
+```{sql connection=con}
+SELECT modality_description AS type_of_imaging, COUNT(modality_description) AS count,  (COUNT(modality_description)*100)/(SELECT COUNT(*) FROM imaging_studies) AS ratio
+FROM imaging_studies
+GROUP BY modality_description 
+ORDER BY COUNT(modality_description) DESC
+```
+
+-   This analysis was conducted to see which body area was observed using imaging techniques the most. Thoracic area, heart, and upper body (between shoulder and elbow) had the highest number of records, indicating that these body areas were processed the most.
+
+```{sql connection=con}
+SELECT bodysite_description AS area_of_imaging, COUNT(bodysite_description) AS count,  (COUNT(bodysite_description)*100)/(SELECT COUNT(*) FROM imaging_studies) AS ratio
+FROM imaging_studies
+GROUP BY bodysite_description 
+ORDER BY COUNT(bodysite_description) DESC
+```
+
+-   With the type of imaging and body area combined, this result shows the top most conducted imaging studies.
+
+```{sql connection=con}
+SELECT modality_description, bodysite_description, COUNT(*) AS count
+FROM imaging_studies
+GROUP BY modality_description, bodysite_description
+ORDER BY COUNT(modality_description) DESC, bodysite_description 
+
+
+
+```
+
+### 2) Asthma Patient Analysis
+
+-   Here, asthma patient cohort was first defined as patients that have the word 'asthma' in their note text.
+
+```{sql connection=con}
+DROP TABLE IF EXISTS asthmaNotePatient
+```
+
+```{sql connection=con}
+WITH asthma_notes AS (
+SELECT DISTINCT patient
+FROM notes
+WHERE LOWER(note_text) LIKE '%asthma%'
+)
+SELECT * INTO TEMP asthmaNotePatient FROM asthma_notes
+
+```
+
+```{sql connection=con}
+SELECT p.gender, COUNT(p.gender)
+FROM asthmaNotePatient AS n
+INNER JOIN
+patients AS p
+ON 
+p.id=n.patient
+GROUP BY p.gender
+
+```
+
+-   Next, the patient from this cohort was compared to the patients from the conditions table where they have the word 'asthma' in their description column.
+-   Column description.
+    -   total_patient: total asthma cohort patients
+    -   patient_count: patients from the asthma cohort that have the keyword 'asthma' in their conditions table description column.
+    -   ratio: the ratio of patients from conditions table compared to the asthma cohort.
+
+```{sql connection=con}
+SELECT (SELECT COUNT(patient) FROM asthmaNotePatient) AS total_patient, COUNT(DISTINCT a.patient) AS patient_count, (COUNT(DISTINCT a.patient)*100)/(SELECT COUNT(patient) FROM asthmaNotePatient) AS ratio
+FROM asthmaNotePatient AS a
+INNER JOIN
+conditions AS c
+ON a.patient=c.patient
+WHERE 
+LOWER(c.description) LIKE '%asthma%'
+
+```
+
+### 3) Allergies
+
+* Patients with the note_text including the word 'shellfish' are compared against patients that received a CT scan using the imaging_studies table. 
+* 5 patients who had the notes with shellfish allergy received CT scans and number of encounters is 24 which indicates that at least some of these patients received CT scans multiple times. 
+
+```{sql connection=con}
+WITH shellfish_note AS (
+SELECT DISTINCT patient
+FROM notes
+WHERE LOWER(note_text) LIKE '%shellfish%' 
+)
+SELECT (SELECT COUNT(DISTINCT patient) FROM shellfish_note) AS shellfish_allergy_patients, COUNT(DISTINCT s.patient) AS allergic_patients_with_CT, COUNT(DISTINCT i.encounter) AS number_of_encounters
+FROM shellfish_note AS s
+INNER JOIN
+imaging_studies AS i
+ON s.patient=i.patient
+WHERE i.modality_code ='CT'
+```
+
+### 4) Patient Matching
+
+* The data was searched for any patients with the same first name and last name. The all_patient_records table was self joined. 
+* Patients with the same first and last name was grouped and the according count value was counted. 
+
+```{sql connection=con}
+select MD5(CONCAT (o1.first, o1.last)) AS fullname, count(DISTINCT o2.enterpriseid) AS count
+FROM onc_pmc.all_patient_records AS o1
+LEFT JOIN onc_pmc.all_patient_records AS o2
+ ON o1.last = o2.last and o1.first = o2.first
+WHERE o1.last IS NOT NULL and o1.first IS NOT NULL
+GROUP BY o1.first, o1.last
+HAVING count(DISTINCT o1.enterpriseid) > 1
+ORDER BY count(DISTINCT o1.enterpriseid) desc
+LIMIT 5;
+```
+
+* In the following analysis, the table was self-joined and values were counted without grouping to count rows with the same first name and last name which resulted in 93045 searches. 
+
+```{sql connection=con}
+SELECT SUM(count_distinct.count_id) AS total FROM
+(
+SELECT COUNT(DISTINCT apr2.enterpriseid) AS count_id
+FROM onc_pmc.all_patient_records AS apr1
+
+LEFT JOIN onc_pmc.all_patient_records AS apr2
+ ON apr1.last = apr2.last AND apr1.first = apr2.first
+
+WHERE apr1.last IS NOT NULL and apr1.first IS NOT NULL AND apr1.enterpriseid<apr2.enterpriseid
+-- apr1.enterpriseid<apr2.enterpriseid : To make sure the count removes duplicate pairs. 
+GROUP BY apr1.first, apr1.last
+HAVING count(DISTINCT apr1.enterpriseid) > 1)
+
+AS count_distinct 
+
+```
+
+* In the following analysis, patients with same first name, last name, and zip code was counted which resulted in 4015 counts. 
+
+```{sql connection=con}
+SELECT SUM(count_distinct_two.count_id) AS total FROM
+(
+SELECT COUNT(DISTINCT apr2.enterpriseid) AS count_id
+FROM onc_pmc.all_patient_records AS apr1
+
+LEFT JOIN onc_pmc.all_patient_records AS apr2
+ ON apr1.last = apr2.last AND apr1.first = apr2.first AND apr1.zip=apr2.zip AND LEFT(apr1.gender, 1)=LEFT(apr2.gender, 1)
+
+WHERE apr1.last IS NOT NULL and apr1.first IS NOT NULL AND apr1.zip IS NOT NULL AND apr1.gender IS NOT NULL AND apr1.enterpriseid<apr2.enterpriseid
+-- apr1.enterpriseid<apr2.enterpriseid : To make sure the count removes duplicate pairs. 
+GROUP BY apr1.first, apr1.last
+HAVING count(DISTINCT apr1.enterpriseid) > 1)
+
+AS count_distinct_two 
+
+```
+
+### 5) Finding Possible Duplicate Accounts
+
+* In this analysis, possible duplicate accounts were searched based on possible errors (typos) in first name or middle name. 
+* In order to do this, all_patient_records was self-joined, and filtered data where the levenshtein distance was 1 in first name or middle name. 
+* In the 'JOIN ON' condition, ssn and dob were added to filter possible duplicates, and to not include patients with simply just similar names. 
+
+* There were 4 records that had the same ssn and dob but 1 letter difference in the first name. 
+* There were 1114 records that had the same ssn and dob but 1 letter difference in the middle name. 
+
+```{sql connection=con}
+SELECT COUNT(DISTINCT a.enterpriseid)
+FROM onc_pmc.all_patient_records AS a
+LEFT JOIN
+onc_pmc.all_patient_records AS b
+ON a.middle=b.middle AND a.ssn=b.ssn AND a.dob=b.dob
+WHERE levenshtein(a.first, b.first)=1 AND a.enterpriseid<b.enterpriseid
+```
+
+```{sql connection=con}
+SELECT COUNT(DISTINCT a.enterpriseid)
+FROM onc_pmc.all_patient_records AS a
+LEFT JOIN
+onc_pmc.all_patient_records AS b
+ON a.first=b.first AND a.ssn=b.ssn AND a.dob=b.dob
+WHERE levenshtein(a.middle, b.middle)=1 AND  a.enterpriseid<b.enterpriseid
+```
