@@ -1,8 +1,6 @@
 # Patient-Data-Exploration
 This repository contains a comprehensive report detailing analyses conducted on a healthcare dataset.
 
-**Class 10 Homework Framework_yc1222**
-
 ---
 
 ### Objective
