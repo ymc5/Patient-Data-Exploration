@@ -1,5 +1,5 @@
 ---
-title: "Class 10 Homework Framework_yc1222"
+title: "Patient Data Exploration"
 format: 
   html:
     self-contained: true
@@ -7,20 +7,17 @@ format:
 
 ```{r setup, include=FALSE}
 #| warning: false
-library(tidyverse)     # loads the tidyverse tools
-library(RPostgres)     # loads the database driver for PostgreSQL
-library(connections)   # helps RPostgres work with RStudio
-library(keyring)       # access to a local encrypted keychain for passwords
+library(tidyverse)     
+library(RPostgres)     
+library(connections)   
+library(keyring)       
 
 
 con <- connection_open(RPostgres::Postgres(),
-          dbname = "syntheticMGUH",
-          host = "35.199.4.72",
-          user = "hids502_student",
-          password = key_get(service = "syntheticmguh", 
-                             username = "hids502_student"),
-          # Tell the driver to return very large integers as floating point (vs truncating them)
-          bigint = "numeric")
+          dbname = "",
+          host = "",
+          user = "",
+          password =,
 ```
 
 ## I. Objective
